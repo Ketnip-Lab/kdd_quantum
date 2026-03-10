@@ -1,0 +1,18 @@
+# ============================================================
+# Dependências Quânticas — NSL-KDD Quantum Analysis
+# ============================================================
+
+# Qiskit (IBM Quantum)
+qiskit>=1.0
+qiskit-machine-learning>=0.7
+qiskit-aer>=0.14
+
+# PennyLane (Xanadu)
+pennylane>=0.35
+pennylane-qiskit>=0.35
+
+# Visualização de circuitos
+pylatexenc
+
+# Otimização (usado por PennyLane)
+autograd

@@ -1,0 +1,23 @@
+# ============================================================
+# Dependências Clássicas — NSL-KDD Analysis
+# ============================================================
+
+# Core
+jupyter
+notebook
+ipykernel
+ipywidgets
+
+# Data Science
+numpy>=1.24
+pandas>=2.0
+scikit-learn>=1.3
+scipy>=1.11
+
+# Visualização
+matplotlib>=3.7
+seaborn>=0.12
+plotly>=5.15
+
+# Utilitários
+tqdm
