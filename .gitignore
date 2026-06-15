@@ -1,0 +1,18 @@
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Python temporary files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Jupyter notebooks checkpoints
+.ipynb_checkpoints/
+
+# OS files
+.DS_Store
+Thumbs.db

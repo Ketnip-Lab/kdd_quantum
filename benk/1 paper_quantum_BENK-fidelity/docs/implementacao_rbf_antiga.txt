@@ -1,0 +1,155 @@
+================================================================================
+DOCUMENTAÇÃO DA IMPLEMENTAÇÃO ORIGINAL: KERNEL RBF SOBRE FEATURES QUÂNTICAS
+Q-BENK (Quantum Beran-Nadaraya-Kernel)
+================================================================================
+
+Arquivo de referência: paper_quantum_BENK-main/quantum_kernel.py
+Data de substituição: 2026-06-15
+Motivo da substituição: Adoção de kernel de fidelidade quântica genuína
+                        (ver implementação em paper_quantum_BENK-fidelity/)
+
+--------------------------------------------------------------------------------
+1. VISÃO GERAL DA ARQUITETURA ORIGINAL
+--------------------------------------------------------------------------------
+
+A implementação original do kernel quântico no Q-BENK operava em DOIS ESTÁGIOS
+completamente separados:
+
+  ESTÁGIO 1 — Circuito Quântico (uma execução por amostra):
+    x  →  U(x; θ)  →  φ(x) = [⟨Z₀⟩, ⟨Z₁⟩, ..., ⟨Z₉⟩]
+
+  ESTÁGIO 2 — Kernel Clássico (calculado classicamente sobre os vetores φ):
+    κ(xᵢ, xⱼ) = exp( −γ · ‖φ(xᵢ) − φ(xⱼ)‖² )
+
+O kernel propriamente dito era, portanto, um KERNEL RBF CLÁSSICO aplicado sobre
+vetores de features extraídos quanticamente.
+
+--------------------------------------------------------------------------------
+2. O CIRCUITO QUÂNTICO (quantum_features)
+--------------------------------------------------------------------------------
+
+Dispositivo: PennyLane default.qubit, 10 qubits, interface JAX
+
+@qml.qnode(dev, interface="jax")
+def quantum_features(x, weights):
+    qml.AngleEmbedding(x, wires=range(n_qubits), rotation='Y')
+    qml.StronglyEntanglingLayers(weights, wires=range(n_qubits))
+    return [qml.expval(qml.PauliZ(i)) for i in range(n_qubits)]
+
+Detalhes do ansatz:
+  - AngleEmbedding: codifica cada feature xₖ como ângulo de rotação RY no
+    qubit k. Isso mapeia o espaço de entrada ℝ¹⁰ para o espaço de estados
+    quânticos de 10 qubits.
+
+  - StronglyEntanglingLayers (2 camadas): cada camada aplica
+      * Rotações parametrizadas: RZ(θ₁) → RY(θ₂) → RZ(θ₃) por qubit
+      * Entanglement cíclico via portas CNOT: q0→q1, q1→q2, ..., q9→q0
+    Total de parâmetros: 2 camadas × 10 qubits × 3 ângulos = 60 parâmetros
+
+  - Medição: valor de expectação ⟨Zₖ⟩ para cada qubit k.
+    Resultado: φ(x) ∈ [−1, +1]^10  (vetor clássico de dimensão 10)
+
+Batching com JAX vmap:
+  vmap_quantum_features = jax.vmap(quantum_features, in_axes=(0, None))
+  → Permite processar N amostras em paralelo, resultado shape: (N, 10)
+
+--------------------------------------------------------------------------------
+3. A FUNÇÃO DO KERNEL (quantum_kernel_matrix)
+--------------------------------------------------------------------------------
+
+@jax.jit
+def quantum_kernel_matrix(X1, X2, weights, gamma=None):
+    # Obtém features quânticas para todos os pontos
+    V1 = vmap_quantum_features(X1, weights)   # shape: (N, 10)
+    V2 = vmap_quantum_features(X2, weights)   # shape: (M, 10)
+
+    # Distâncias euclidianas ao quadrado via identidade:
+    # ‖v1ᵢ − v2ⱼ‖² = ‖v1ᵢ‖² − 2·v1ᵢᵀv2ⱼ + ‖v2ⱼ‖²
+    V1_sq = jnp.sum(V1**2, axis=1, keepdims=True)  # (N, 1)
+    V2_sq = jnp.sum(V2**2, axis=1, keepdims=True)  # (M, 1)
+    dists  = V1_sq - 2 * jnp.dot(V1, V2.T) + V2_sq.T  # (N, M)
+
+    # Kernel RBF
+    return jnp.exp(-gamma * dists)
+
+Parâmetro γ (gamma):
+  - Controla a largura da "janela" do kernel (bandwidth)
+  - Valor padrão no config.json: gamma = 1.0
+  - Unidade: [1/distância²] — quanto maior γ, mais local é o kernel
+
+Complexidade computacional:
+  - Execuções do circuito: O(N + M)  — um circuito por amostra
+  - Cálculo do kernel: O(N·M·d)  — produto de matrizes clássico
+  - Para N=1000: ~1000 execuções do circuito
+
+--------------------------------------------------------------------------------
+4. INTEGRAÇÃO COM O ESTIMADOR DE BERAN
+--------------------------------------------------------------------------------
+
+O kernel é usado em beran_estimator.py para calcular pesos de Nadaraya-Watson:
+
+  W(z, xᵢ) = κ(z, xᵢ) / Σⱼ κ(z, xⱼ)
+
+Esses pesos são usados no estimador de Beran para calcular a função de
+sobrevivência não-paramétrica S(t|z), e daí o tempo de sobrevivência esperado
+E[T|z] e o CATE (Conditional Average Treatment Effect).
+
+--------------------------------------------------------------------------------
+5. LIMITAÇÕES IDENTIFICADAS (motivação para a nova implementação)
+--------------------------------------------------------------------------------
+
+a) NÃO É UM KERNEL QUÂNTICO GENUÍNO:
+   O kernel é computado classicamente via RBF. O circuito serve apenas como
+   feature map — equivalente a uma projeção de kernel clássico com features
+   aleatórias fixas, diferente de um kernel quântico fundamentado na
+   sobreposição de estados.
+
+b) AUSÊNCIA DE GARANTIA DE PSD:
+   O kernel RBF clássico é PSD, porém a composição com features quânticas
+   (que podem não ser linearmente independentes nem isométricas) não garante
+   que a matriz kernel resultante seja PSD para todos os conjuntos de dados.
+
+c) PARÂMETRO γ ADICIONAL:
+   Introduz um hiperparâmetro extra (gamma) que precisa ser tunado e não tem
+   interpretação quântica clara.
+
+d) AUSÊNCIA DE PROPRIEDADE DE KERNEL DE HILBERT:
+   O kernel de fidelidade satisfaz a definição de kernel sobre o espaço de
+   Hilbert quântico de forma natural, enquanto o RBF sobre φ(x) não.
+
+--------------------------------------------------------------------------------
+6. PARÂMETROS DE CONFIGURAÇÃO RELEVANTES (config.json original)
+--------------------------------------------------------------------------------
+
+{
+    "quantum": {
+        "n_qubits": 10,
+        "n_layers": 2,
+        "gamma": 1.0,      ← parâmetro do kernel RBF (removido na nova versão)
+        "seed": 42
+    },
+    "execution": {
+        "use_parallel": true,
+        "backend": "default.qubit"
+    }
+}
+
+--------------------------------------------------------------------------------
+7. REFERÊNCIAS
+--------------------------------------------------------------------------------
+
+- Schuld, M., & Killoran, N. (2019). Quantum machine learning in feature
+  Hilbert spaces. Physical Review Letters, 122(4), 040504.
+  → Estabelece o fundamento teórico de kernels sobre espaços de Hilbert quânticos
+
+- Havlíček, V., et al. (2019). Supervised learning with quantum-enhanced
+  feature spaces. Nature, 567(7747), 209-212.
+  → Demonstra o kernel de fidelidade quântica em hardware real
+
+- Beran, R. (1981). Nonparametric regression with randomly censored survival
+  data. Technical report, UC Berkeley.
+  → Base do estimador de sobrevivência usado no Q-BENK
+
+================================================================================
+FIM DO DOCUMENTO
+================================================================================
