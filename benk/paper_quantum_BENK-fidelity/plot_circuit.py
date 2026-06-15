@@ -1,11 +1,10 @@
 """
-plot_circuit.py — Diagrama do Circuito Quântico do Q-BENK
-==========================================================
+plot_circuit.py — Diagrama do Circuito Quântico do Q-BENK (Fidelidade)
+=======================================================================
 Gera uma figura publication-ready mostrando:
   - Bloco de Angle Embedding (RY gates)
   - 2 camadas de StronglyEntanglingLayers (RZ/RY/RZ + CNOTs)
-  - Medições ⟨Z⟩ em cada qubit
-  - Esquema do kernel RBF quântico abaixo
+  - Painel superior: Kernel de Fidelidade Quântica KQ = |⟨ψ(xᵢ)|ψ(xⱼ)⟩|²
 """
 import matplotlib
 matplotlib.use("Agg")
@@ -32,7 +31,7 @@ C_EMBED  = "#4C72B0"   # azul — Angle Embedding
 C_ROT    = "#DD8452"   # laranja — Rotações (RZ/RY/RZ)
 C_CNOT   = "#55A868"   # verde — CNOT
 C_MEAS   = "#C44E52"   # vermelho — Medição
-C_KERNEL = "#8172B2"   # roxo — Kernel RBF
+C_KERNEL = "#8172B2"   # roxo — Kernel de Fidelidade
 C_WIRE   = "#333333"
 BG_LAYER = "#F0F4FF"   # fundo das camadas SEL
 
@@ -195,59 +194,67 @@ ax.text(x_end + 0.22, y_dots_meas, "⋮",
         fontsize=26, color=C_MEAS, fontweight="bold", zorder=6)
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Section 5 — RBF Kernel scheme (TOP panel — above circuit)
+# Section 5 — Kernel de Fidelidade Quântica (TOP panel — above circuit)
+#
+# O kernel de fidelidade é definido como:
+#   KQ(xᵢ, xⱼ) = |⟨ψ(xⱼ)|ψ(xᵢ)⟩|²
+# onde |ψ(x)⟩ = U(x; θ)|0⟩ é o estado preparado pelo ansatz.
 # ─────────────────────────────────────────────────────────────────────────────
 ky = 12.7   # vertical centre of the kernel panel
 # Thin separator below the panel
 ax.axhline(ky - 0.85, color="#cccccc", lw=0.9, ls="--", xmin=0.03, xmax=0.97)
 
-# phi_i box
-bw, bh = 3.0, 0.62
-b1x = 1.0
-phi1 = FancyBboxPatch((b1x, ky - bh/2), bw, bh,
+# ── Estado |ψ(xᵢ)⟩ — box esquerdo ──────────────────────────────────────────
+bw, bh = 2.8, 0.65
+b1x = 0.8
+psi1 = FancyBboxPatch((b1x, ky - bh/2), bw, bh,
                        boxstyle="round,pad=0.08",
                        facecolor=C_KERNEL, edgecolor="white",
                        linewidth=1.2, alpha=0.88, zorder=3)
-ax.add_patch(phi1)
+ax.add_patch(psi1)
 ax.text(b1x + bw/2, ky,
-        r"$\varphi(\mathbf{x}_i)=[\langle Z_0\rangle,\ldots,\langle Z_9\rangle]$",
-        ha="center", va="center", fontsize=12, color="white",
+        r"$|\psi(\mathbf{x}_i)\rangle = U(\mathbf{x}_i;\,\theta)|0\rangle$",
+        ha="center", va="center", fontsize=11.5, color="white",
         fontweight="bold", zorder=4)
 
-# phi_j box
-b2x = 5.0
-phi2 = FancyBboxPatch((b2x, ky - bh/2), bw, bh,
+# ── Estado |ψ(xⱼ)⟩ — box direito (pré-fórmula) ──────────────────────────────
+b2x = 4.6
+psi2 = FancyBboxPatch((b2x, ky - bh/2), bw, bh,
                        boxstyle="round,pad=0.08",
                        facecolor=C_KERNEL, edgecolor="white",
                        linewidth=1.2, alpha=0.88, zorder=3)
-ax.add_patch(phi2)
+ax.add_patch(psi2)
 ax.text(b2x + bw/2, ky,
-        r"$\varphi(\mathbf{x}_j)=[\langle Z_0\rangle,\ldots,\langle Z_9\rangle]$",
-        ha="center", va="center", fontsize=12, color="white",
+        r"$|\psi(\mathbf{x}_j)\rangle = U(\mathbf{x}_j;\,\theta)|0\rangle$",
+        ha="center", va="center", fontsize=11.5, color="white",
         fontweight="bold", zorder=4)
 
-# Single arrow from both boxes to the kernel formula
+# ── Seta com label "Fidelidade" ───────────────────────────────────────────────
 x_arrow_start = b2x + bw + 0.15
 x_arrow_end   = 9.1
 ax.annotate("", xy=(x_arrow_end, ky), xytext=(x_arrow_start, ky),
-            arrowprops=dict(arrowstyle="-|>", color=C_KERNEL, lw=2.0), zorder=4)
+            arrowprops=dict(arrowstyle="-|>", color=C_KERNEL, lw=2.2), zorder=4)
+ax.text((x_arrow_start + x_arrow_end) / 2, ky + 0.30,
+        "Fidelidade",
+        ha="center", va="bottom", fontsize=10.5,
+        fontstyle="italic", color=C_KERNEL, zorder=4)
 
-# Kernel formula box
+# ── Fórmula do kernel de fidelidade ──────────────────────────────────────────
 kbx = x_arrow_end + 0.1
-kbw = 6.5
+kbw = 6.6
 kernel_box = FancyBboxPatch((kbx, ky - bh/2 - 0.06), kbw, bh + 0.12,
                              boxstyle="round,pad=0.1",
                              facecolor="#F3EEFF", edgecolor=C_KERNEL,
                              linewidth=1.8, alpha=0.95, zorder=3)
 ax.add_patch(kernel_box)
 ax.text(kbx + kbw/2, ky,
-        r"$\kappa(\mathbf{x}_i,\mathbf{x}_j)="
-        r"\exp\!\left(-\gamma\|\varphi(\mathbf{x}_i)-\varphi(\mathbf{x}_j)\|^2\right)$",
+        r"$K_Q(\mathbf{x}_i,\mathbf{x}_j)="
+        r"|\langle\psi(\mathbf{x}_j)|\psi(\mathbf{x}_i)\rangle|^2$",
         ha="center", va="center", fontsize=13.5, color=C_KERNEL,
         fontweight="bold", zorder=4)
 
-# Section label
-ax.text(8, ky - 0.68, "Quantum RBF Kernel",
+# ── Label da seção ────────────────────────────────────────────────────────────
+ax.text(8, ky - 0.68, "Quantum Fidelity Kernel",
         ha="center", va="center",
         fontsize=12, fontstyle="italic", color=C_KERNEL, zorder=4)
 
@@ -258,8 +265,8 @@ legend_items = [
     mpatches.Patch(facecolor=C_EMBED,  label="Angle Embedding  (RY)"),
     mpatches.Patch(facecolor=C_ROT,    label="Rotações  (RZ–RY–RZ)"),
     mpatches.Patch(facecolor=C_CNOT,   label="Entanglement  (CNOT)"),
-    mpatches.Patch(facecolor=C_MEAS,   label="Medição  ⟨Z⟩"),
-    mpatches.Patch(facecolor=C_KERNEL, label="Kernel RBF Quântico"),
+    mpatches.Patch(facecolor=C_MEAS,   label="Medição  P(|0…0⟩)"),
+    mpatches.Patch(facecolor=C_KERNEL, label="Kernel de Fidelidade Quântica"),
 ]
 ax.legend(handles=legend_items, loc="lower left",
           bbox_to_anchor=(0.0, -0.06), fontsize=12,
@@ -268,7 +275,8 @@ ax.legend(handles=legend_items, loc="lower left",
 
 ax.set_title(
     "Q-BENK  ·  Parametrized Quantum Circuit  "
-    f"({N_QUBITS} qubits, {N_LAYERS} layers, 60 trainable parameters)",
+    f"({N_QUBITS} qubits, {N_LAYERS} layers, 60 trainable parameters)  "
+    "— Fidelity Kernel",
     fontsize=16, fontweight="bold", pad=12, color="#222222"
 )
 

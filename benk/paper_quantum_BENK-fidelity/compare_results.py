@@ -1,146 +1,264 @@
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
+"""
+compare_results.py — Comparação Q-BENK Fidelity vs Baselines do Paper BENK
+===========================================================================
+
+Executa o Q-BENK com kernel de fidelidade quântica para as três funções
+(Spiral, Logarithmic, Power) e plota a comparação com:
+  - Baselines do paper BENK original (NW, Cox, SF em variantes T/S/X)
+  - BENK clássico (do paper)
+  - Q-BENK RBF (implementação anterior — carregado do JSON da pasta main)
+  - Q-BENK Fidelidade (esta implementação)
+
+Saída
+-----
+  data/quantum_benk_fidelity_rmses.json   ← resultados desta execução (cache)
+  data/combined_comparison_plot.png       ← gráfico completo
+  data/updated_baselines_fidelity.csv     ← tabela CSV com todos os modelos
+"""
+
 import os
 import sys
 import json
-from main import run_experiment
+import subprocess
+import numpy as np
+import pandas as pd
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 
-def run_all_benchmarks(force_run=False):
-    cache_path = "data/quantum_benk_fidelity_rmses.json"
-    functions = ["Spiral", "Logarithmic", "Power"]
-    
-    if not force_run and os.path.exists(cache_path):
+# ── Caminhos ─────────────────────────────────────────────────────────────────
+HERE       = os.path.dirname(os.path.abspath(__file__))
+CACHE_PATH = os.path.join(HERE, "data", "quantum_benk_fidelity_rmses.json")
+BASELINE   = os.path.join(HERE, "data", "baselines.csv")
+# RMSEs do Q-BENK RBF antigo (pasta paper_quantum_BENK-main)
+OLD_RMSES  = os.path.join(HERE, "..", "paper_quantum_BENK-main",
+                          "data", "quantum_benk_rmses.json")
+
+
+# ── Funções avaliadas ─────────────────────────────────────────────────────────
+FUNCTIONS = ["Spiral", "Logarithmic", "Power"]
+
+
+# ── Execução do experimento ───────────────────────────────────────────────────
+def run_all_benchmarks(force_run: bool = False) -> dict:
+    """
+    Roda o Q-BENK com kernel de fidelidade para cada função.
+
+    Usa cache JSON se disponível (a menos que force_run=True).
+    Cada experimento é executado em subprocesso separado para isolar
+    o estado JAX e evitar conflitos de compilação JIT.
+
+    Parâmetros
+    ----------
+    force_run : bool
+        Se True, ignora o cache e executa novamente.
+
+    Retorna
+    -------
+    dict  {função → RMSE}
+    """
+    if not force_run and os.path.exists(CACHE_PATH):
         try:
-            with open(cache_path, 'r') as f:
+            with open(CACHE_PATH, "r") as f:
                 cached = json.load(f)
-            # Check if all functions are in the cache and none are NaN or null
-            if all(f_type in cached for f_type in functions) and all(cached[f_type] is not None and not np.isnan(cached[f_type]) for f_type in functions):
-                print(f"Loading Quantum-BENK Fidelity results from cache: {cached}")
+            if all(ft in cached for ft in FUNCTIONS):
+                print(f"[Cache] Q-BENK Fidelidade carregado: {cached}")
                 return cached
         except Exception as e:
-            print(f"Failed to read cache: {e}")
-            
+            print(f"[Aviso] Falha ao ler cache: {e}")
+
     q_rmses = {}
-    for f_type in functions:
-        print(f"\nEvaluating Quantum-BENK Fidelity for {f_type}...")
+    for f_type in FUNCTIONS:
+        print(f"\n{'='*50}")
+        print(f"  Rodando Q-BENK Fidelidade — {f_type}")
+        print(f"{'='*50}")
         try:
-            # Run the experiment in-process to avoid subprocess issues
-            val = run_experiment(f_type)
-            print(f"RESULT for {f_type}: {val:.4f}")
-            q_rmses[f_type] = float(val)
+            cmd = [
+                sys.executable, "-c",
+                (
+                    f"import sys; sys.path.insert(0, r'{HERE}');"
+                    f"from main import run_experiment;"
+                    f"val = run_experiment('{f_type}');"
+                    f"print(f'RESULT:{{val}}')"
+                ),
+            ]
+            res = subprocess.run(
+                cmd, capture_output=True, text=True, cwd=HERE
+            )
+            if res.returncode != 0:
+                print(f"[Erro] Subprocesso falhou (código {res.returncode}):")
+                print(res.stderr[-2000:])
+                q_rmses[f_type] = np.nan
+            else:
+                val = np.nan
+                for line in res.stdout.splitlines():
+                    if line.startswith("RESULT:"):
+                        val = float(line.split(":", 1)[1].strip())
+                    else:
+                        print(line)
+                if res.stderr:
+                    # Exibe apenas avisos relevantes (filtrar ruído de JAX)
+                    for ln in res.stderr.splitlines():
+                        if "WARNING" not in ln and "INFO" not in ln:
+                            print(ln)
+                q_rmses[f_type] = val
+                print(f"  → RMSE ({f_type}): {val:.4f}")
         except Exception as e:
-            print(f"Failed to run experiment for {f_type}: {e}")
+            print(f"[Erro] {f_type}: {e}")
             q_rmses[f_type] = np.nan
-            
-    # Cache results
-    os.makedirs(os.path.dirname(cache_path), exist_ok=True)
-    try:
-        # Convert values to serializable types
-        serializable_rmses = {k: (None if np.isnan(v) else v) for k, v in q_rmses.items()}
-        with open(cache_path, 'w') as f:
-            json.dump(serializable_rmses, f, indent=2)
-    except Exception as e:
-        print(f"Failed to write cache: {e}")
-        
+
+    # Salvar cache
+    os.makedirs(os.path.dirname(CACHE_PATH), exist_ok=True)
+    with open(CACHE_PATH, "w") as f:
+        json.dump(q_rmses, f, indent=2)
+    print(f"\n[Cache] Resultados salvos em {CACHE_PATH}")
     return q_rmses
 
-def plot_combined_results(q_fidelity_rmses, csv_path="data/baselines.csv"):
-    if not os.path.exists(csv_path):
-        print(f"Baseline file {csv_path} not found.")
+
+# ── Plot de comparação ────────────────────────────────────────────────────────
+def plot_combined_results(q_fidelity_rmses: dict) -> None:
+    """
+    Gera o gráfico de barras comparando todos os modelos.
+
+    Modelos incluídos:
+      - Baselines do paper BENK (NW, Cox, SF em variantes T/S/X)
+      - BENK clássico (paper)
+      - Q-BENK RBF (implementação anterior)
+      - Q-BENK Fidelidade (esta implementação)
+
+    A comparação direta entre Q-BENK RBF e Q-BENK Fidelidade permite avaliar
+    o impacto da mudança de paradigma de kernel.
+
+    Parâmetros
+    ----------
+    q_fidelity_rmses : dict  {função → RMSE}  resultados do kernel de fidelidade
+    """
+    if not os.path.exists(BASELINE):
+        print(f"[Erro] Arquivo de baselines não encontrado: {BASELINE}")
         return
-        
-    df = pd.read_csv(csv_path)
-    functions = ["Spiral", "Logarithmic", "Power"]
-    
-    # Load RBF results
-    rbf_path = "../paper_quantum_BENK-main/data/quantum_benk_rmses.json"
-    q_rbf_rmses = {"Spiral": 3.2442, "Logarithmic": 3.0069, "Power": 2.1303} # Fallback
-    if os.path.exists(rbf_path):
-        try:
-            with open(rbf_path, 'r') as f:
-                q_rbf_rmses = json.load(f)
-            print(f"Loaded Q-BENK RBF results from main folder: {q_rbf_rmses}")
-        except Exception as e:
-            print(f"Could not load Q-BENK RBF cache, using default fallback: {e}")
-            
-    # Models to plot
-    models = df['Model'].unique().tolist()
-    
-    # We will add "Q-BENK RBF" and "Q-BENK Fidelity"
-    if "Q-BENK RBF" not in models:
-        models.append("Q-BENK RBF")
-    if "Q-BENK Fidelity" not in models:
-        models.append("Q-BENK Fidelity")
-        
-    # Prepare data matrix
-    data_matrix = {model: [] for model in models}
-    
-    for f_type in functions:
-        df_func = df[df['Function'] == f_type]
-        for model in models:
+
+    df = pd.read_csv(BASELINE)
+
+    # Carrega RMSEs do Q-BENK RBF antigo, se disponível
+    rbf_rmses = {}
+    if os.path.exists(OLD_RMSES):
+        with open(OLD_RMSES, "r") as f:
+            rbf_rmses = json.load(f)
+        print(f"[Info] Q-BENK RBF (antigo) carregado: {rbf_rmses}")
+    else:
+        print(f"[Aviso] Arquivo de RMSEs do Q-BENK RBF não encontrado: {OLD_RMSES}")
+
+    # Lista completa de modelos na ordem desejada
+    base_models = df["Model"].unique().tolist()
+    all_models  = base_models.copy()
+    if rbf_rmses:
+        all_models.append("Q-BENK RBF")
+    all_models.append("Q-BENK Fidelidade")
+
+    # Monta matriz de dados
+    data_matrix = {m: [] for m in all_models}
+    for f_type in FUNCTIONS:
+        df_f = df[df["Function"] == f_type]
+        for model in all_models:
             if model == "Q-BENK RBF":
-                data_matrix[model].append(q_rbf_rmses.get(f_type, np.nan))
-            elif model == "Q-BENK Fidelity":
+                data_matrix[model].append(rbf_rmses.get(f_type, np.nan))
+            elif model == "Q-BENK Fidelidade":
                 data_matrix[model].append(q_fidelity_rmses.get(f_type, np.nan))
             else:
-                val = df_func[df_func['Model'] == model]['RMSE']
-                data_matrix[model].append(val.values[0] if not val.empty else np.nan)
-                
-    # Plotting
-    x = np.arange(len(functions))
-    width = 0.85 / len(models)
-    
-    fig, ax = plt.subplots(figsize=(15, 8))
-    
-    # Define color scheme
-    colors = {
-        "Q-BENK RBF": "#1f77b4",       # Nice blue
-        "Q-BENK Fidelity": "#228b22",  # Forest green
-        "BENK": "#d62728",             # Red
-    }
-    
-    for i, model in enumerate(models):
-        offset = (i - len(models)/2) * width + width/2
-        color = colors.get(model, None)
-        hatch = None
-        if model == "Q-BENK Fidelity":
-            hatch = "//"
-        bars = ax.bar(x + offset, data_matrix[model], width, label=model, color=color, edgecolor='black', linewidth=0.5, hatch=hatch)
-        
-    ax.set_ylabel('CATE RMSE', fontsize=18, fontweight='bold')
+                row = df_f[df_f["Model"] == model]["RMSE"]
+                data_matrix[model].append(row.values[0] if not row.empty else np.nan)
+
+    # ── Estilo de publicação ──────────────────────────────────────────────────
+    plt.rcParams.update({
+        "font.family":  "sans-serif",
+        "font.size":    13,
+        "axes.spines.top":   False,
+        "axes.spines.right": False,
+    })
+
+    fig, ax = plt.subplots(figsize=(16, 7))
+
+    x     = np.arange(len(FUNCTIONS))
+    n     = len(all_models)
+    width = 0.82 / n
+
+    # Paleta: destaque para os dois Q-BENKs
+    palette = plt.cm.tab20.colors
+    for i, model in enumerate(all_models):
+        offset = (i - n / 2) * width + width / 2
+        if model == "Q-BENK Fidelidade":
+            color, edge, lw, zorder = "#4B0082", "#1a0033", 1.5, 5   # roxo escuro
+        elif model == "Q-BENK RBF":
+            color, edge, lw, zorder = "#228b22", "#0d4b0d", 1.5, 4   # verde escuro
+        elif model == "BENK":
+            color, edge, lw, zorder = "#1f77b4", "#0d3d6e", 1.5, 4   # azul
+        else:
+            color, edge, lw, zorder = palette[i % len(palette)], "white", 0.5, 3
+
+        bars = ax.bar(
+            x + offset, data_matrix[model], width,
+            label=model, color=color, edgecolor=edge, linewidth=lw,
+            zorder=zorder, alpha=0.92
+        )
+        # Adiciona valores nas barras dos modelos de interesse
+        if model in ("Q-BENK Fidelidade", "Q-BENK RBF", "BENK"):
+            for bar in bars:
+                h = bar.get_height()
+                if not np.isnan(h):
+                    ax.text(
+                        bar.get_x() + bar.get_width() / 2, h + 0.15,
+                        f"{h:.2f}", ha="center", va="bottom",
+                        fontsize=9, fontweight="bold",
+                        color=color
+                    )
+
+    ax.set_ylabel("RMSE (CATE)", fontsize=15)
     ax.set_xticks(x)
-    ax.set_xticklabels(functions, fontsize=16, fontweight='bold')
-    ax.tick_params(axis='y', labelsize=14)
-    ax.grid(axis='y', linestyle='--', alpha=0.7)
-    
-    # Legend outside, nicely placed
-    ax.legend(bbox_to_anchor=(1.02, 1), loc='upper left', fontsize=14, frameon=True, shadow=True)
-    
-    # Clean style
-    ax.spines['top'].set_visible(False)
-    ax.spines['right'].set_visible(False)
-    
+    ax.set_xticklabels(FUNCTIONS, fontsize=14)
+    ax.tick_params(axis="y", labelsize=13)
+    ax.set_ylim(0, ax.get_ylim()[1] * 1.12)
+    ax.yaxis.grid(True, alpha=0.3, linestyle="--")
+    ax.set_axisbelow(True)
+
+    # Legenda fora do gráfico
+    ax.legend(
+        bbox_to_anchor=(1.01, 1), loc="upper left",
+        fontsize=11, frameon=True, edgecolor="#cccccc"
+    )
+
+    ax.set_title(
+        "Comparação de Performance — CATE RMSE\n"
+        "Q-BENK Fidelidade vs Q-BENK RBF vs Baselines do Paper BENK",
+        fontsize=15, fontweight="bold", pad=14, color="#222222"
+    )
+
     plt.tight_layout()
-    os.makedirs("data", exist_ok=True)
-    plt.savefig("data/combined_comparison_plot.png", dpi=300)
-    print("\nGráfico combinado salvo em 'data/combined_comparison_plot.png'")
-    
-    # Save the complete table
+    out = os.path.join(HERE, "data", "combined_comparison_plot.png")
+    plt.savefig(out, dpi=300, bbox_inches="tight", facecolor="white")
+    print(f"\nGráfico salvo em '{out}'")
+    plt.close()
+
+    # ── Tabela completa ───────────────────────────────────────────────────────
     records = []
-    for f_type in functions:
-        for model in models:
+    for f_type in FUNCTIONS:
+        fi = FUNCTIONS.index(f_type)
+        for model in all_models:
             records.append({
-                "Model": model,
+                "Model":    model,
                 "Function": f_type,
-                "RMSE": data_matrix[model][functions.index(f_type)]
+                "RMSE":     round(data_matrix[model][fi], 4)
+                            if not np.isnan(data_matrix[model][fi]) else np.nan
             })
     df_out = pd.DataFrame(records)
-    print("\nTabela Completa Atualizada:")
-    print(df_out.to_string(index=False))
-    df_out.to_csv("data/updated_baselines.csv", index=False)
+    print("\nTabela Completa:")
+    print(df_out.pivot(index="Model", columns="Function", values="RMSE").to_string())
+    out_csv = os.path.join(HERE, "data", "updated_baselines_fidelity.csv")
+    df_out.to_csv(out_csv, index=False)
+    print(f"\nCSV salvo em '{out_csv}'")
 
+
+# ── Entry point ───────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     force = "--force" in sys.argv
-    q_rmses = run_all_benchmarks(force_run=force)
-    plot_combined_results(q_rmses)
+    q_fidelity = run_all_benchmarks(force_run=force)
+    plot_combined_results(q_fidelity)
