@@ -16,3 +16,15 @@ __pycache__/
 # OS files
 .DS_Store
 Thumbs.db
+
+# Files from benk repository root (tracked in paper_quantum_BENK repo)
+benk/README.md
+benk/beran_estimator.py
+benk/combined_comparison_plot.png
+benk/compare_results.py
+benk/config.json
+benk/data_generator.py
+benk/main.py
+benk/quantum_kernel.py
+benk/requirements.txt
+benk/survival_curves.png
